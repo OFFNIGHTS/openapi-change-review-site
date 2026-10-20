@@ -8,13 +8,13 @@
 </style></head><body>
 <header><div class="brand"><span>◇</span> OpenAPI Change Review</div><span class="status">Free prelaunch preview · no billing</span></header>
 <main class="wrap">
-<section class="hero"><div class="eyebrow">Developer tooling · early preview</div><h1>See risky API changes before they cause surprises.</h1><p class="lede">Paste earlier and updated OpenAPI JSON specifications to spot removed paths, removed methods, and newly required parameters. The checker runs entirely in your browser. This is a limited demonstration, not a production monitoring service.</p></section>
+<section class="hero"><div class="eyebrow">Developer tooling · early preview</div><h1>See risky API changes before they cause surprises.</h1><p class="lede">Paste earlier and updated OpenAPI JSON specifications to flag removed paths and methods, removed successful response codes, security-scheme type changes, and newly required parameters. The checker runs entirely in your browser. This is a limited demonstration, not a production monitoring service.</p></section>
 <section class="panel"><div class="panel-head"><h2>Try a sample comparison</h2><small>JSON only · no server upload</small></div>
 <div class="columns"><div><label for="old">Earlier OpenAPI JSON</label><textarea id="old" spellcheck="false" aria-label="Earlier OpenAPI JSON"></textarea></div><div><label for="new">Updated OpenAPI JSON</label><textarea id="new" spellcheck="false" aria-label="Updated OpenAPI JSON"></textarea></div></div>
-<div class="actions"><small>Example content is prefilled. Do not paste secrets or personal data.</small><button id="compare" type="button">Compare versions →</button></div>
+<div class="actions"><small>Example content is prefilled with four candidate changes. Do not paste secrets or personal data.</small><button id="compare" type="button">Compare versions →</button></div>
 <h2>Results</h2><pre id="result" role="status" aria-live="polite">No comparison run yet.</pre>
 </section>
-<section class="features"><div class="feature"><b>Available today</b><p>A free browser-side JSON checker for several common breaking-change patterns.</p></div><div class="feature"><b>Being researched</b><p>Scheduled monitoring, history, and automatic alerts. These features are not publicly available yet.</p></div><div class="feature"><b>Pricing</b><p>No subscriptions, paid plans, signup, or payment processing are enabled.</p></div></section>
+<section class="features"><div class="feature"><b>Available today</b><p>A free browser-side JSON checker for five targeted kinds of potentially breaking API changes.</p></div><div class="feature"><b>Being researched</b><p>Scheduled monitoring, history, and automatic alerts. These features are not publicly available yet.</p></div><div class="feature"><b>Pricing</b><p>No subscriptions, paid plans, signup, or payment processing are enabled.</p></div></section>
 <section id="pilot" aria-labelledby="pilot-heading" style="border:1px solid #365673;border-radius:16px;padding:24px;background:#112238;margin:0 0 38px">
 <h2 id="pilot-heading" style="margin-top:0">Interested in future API monitoring?</h2>
 <p>We are evaluating a limited free pilot for scheduled detection of changes to <strong>publicly accessible OpenAPI documents</strong>. It is not accepting customers or running a public monitoring service yet. If you would like to hear when applications open, you can email us without providing secrets or confidential API specifications.</p>
@@ -31,10 +31,51 @@
 <script>
 'use strict';
 const before=document.getElementById('old'),after=document.getElementById('new'),result=document.getElementById('result');
-before.value=JSON.stringify({openapi:'3.0.0',info:{title:'Demo API',version:'1.0.0'},paths:{'/users':{get:{parameters:[{name:'page',in:'query',required:false}],responses:{'200':{description:'OK'}}}},'/health':{get:{responses:{'200':{description:'OK'}}}}}},null,2);
-after.value=JSON.stringify({openapi:'3.0.0',info:{title:'Demo API',version:'2.0.0'},paths:{'/users':{get:{parameters:[{name:'page',in:'query',required:true}],responses:{'200':{description:'OK'}}}}}},null,2);
+const exampleBase={openapi:'3.0.0',info:{title:'Demo API',version:'1.0.0'},components:{securitySchemes:{AccessToken:{type:'http',scheme:'bearer'}}},paths:{'/users':{get:{parameters:[{name:'page',in:'query',required:false}],responses:{'200':{description:'OK'},'201':{description:'Created'}}}},'/health':{get:{responses:{'200':{description:'OK'}}}}}};
+const exampleUpdate={openapi:'3.0.0',info:{title:'Demo API',version:'2.0.0'},components:{securitySchemes:{AccessToken:{type:'oauth2',flows:{clientCredentials:{tokenUrl:'https://example.invalid/token',scopes:{}}}}}},paths:{'/users':{get:{parameters:[{name:'page',in:'query',required:true}],responses:{'200':{description:'OK'}}}}}};
+before.value=JSON.stringify(exampleBase,null,2);
+after.value=JSON.stringify(exampleUpdate,null,2);
 const verbs=['get','put','post','delete','patch','head','options','trace'];
-const parameters=x=>Array.isArray(x)?x.filter(z=>z&&z.required===true).map(z=>(z.in||'unknown')+':'+(z.name||'unknown')):[];
-function check(a,b){if(!a||!b||typeof a.openapi!=='string'||typeof b.openapi!=='string'||!a.paths||!b.paths||typeof a.paths!=='object'||typeof b.paths!=='object')throw Error('Both inputs must be OpenAPI JSON objects containing a paths object.');const changes=[];for(const [path,oldPath] of Object.entries(a.paths)){if(!Object.prototype.hasOwnProperty.call(b.paths,path)){changes.push('BREAKING CANDIDATE: Removed path '+path);continue;}for(const method of verbs){const old=oldPath&&oldPath[method];if(!old)continue;const next=b.paths[path]&&b.paths[path][method];if(!next){changes.push('BREAKING CANDIDATE: Removed '+method.toUpperCase()+' '+path);continue;}const requiredBefore=new Set(parameters([...(oldPath.parameters||[]),...(old.parameters||[])]));for(const name of parameters([...(b.paths[path].parameters||[]),...(next.parameters||[])])){if(!requiredBefore.has(name))changes.push('BREAKING CANDIDATE: Newly required '+name+' on '+method.toUpperCase()+' '+path);}}}return changes;}
-document.getElementById('compare').addEventListener('click',()=>{try{const issues=check(JSON.parse(before.value),JSON.parse(after.value));result.textContent=issues.length?issues.join('\n')+'\n\nLimited client-side review; other breaking changes may be missed.':'No targeted patterns found. This does not establish that the APIs are compatible.';}catch(e){result.textContent='Could not compare: '+(e instanceof Error?e.message:'Invalid input');}});
+const isRecord=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
+function requiredParams(path,op){
+ const params=new Map();
+ for(const p of [...(Array.isArray(path?.parameters)?path.parameters:[]),...(Array.isArray(op?.parameters)?op.parameters:[])]){
+  if(isRecord(p)&&typeof p.name==='string'&&typeof p.in==='string')params.set(p.in+':'+p.name,p.required===true);
+ }
+ return new Set([...params].filter(([,required])=>required).map(([key])=>key));
+}
+function check(a,b){
+ if(!isRecord(a)||!isRecord(b)||typeof a.openapi!=='string'||typeof b.openapi!=='string'||!isRecord(a.paths)||!isRecord(b.paths))throw Error('Both inputs must be OpenAPI JSON objects with paths objects.');
+ const changes=[];
+ const add=msg=>{if(changes.length<150)changes.push('BREAKING CANDIDATE: '+msg)};
+ const oldSchemes=isRecord(a.components?.securitySchemes)?a.components.securitySchemes:{};
+ const newSchemes=isRecord(b.components?.securitySchemes)?b.components.securitySchemes:{};
+ for(const [name,scheme] of Object.entries(oldSchemes)){
+  const newer=newSchemes[name];
+  if(!isRecord(newer))add('Removed security scheme '+name);
+  else if(isRecord(scheme)&&typeof scheme.type==='string'&&typeof newer.type==='string'&&scheme.type!==newer.type)add('Security scheme '+name+' type changed ('+scheme.type+' → '+newer.type+')');
+ }
+ for(const [path,oldPath] of Object.entries(a.paths)){
+  if(!Object.prototype.hasOwnProperty.call(b.paths,path)){add('Removed path '+path);continue;}
+  const updatedPath=b.paths[path];
+  if(!isRecord(oldPath)||!isRecord(updatedPath))continue;
+  for(const method of verbs){
+   const previous=oldPath[method];if(!isRecord(previous))continue;
+   const updated=updatedPath[method];if(!isRecord(updated)){add('Removed '+method.toUpperCase()+' '+path);continue;}
+   const oldRequired=requiredParams(oldPath,previous);
+   for(const name of requiredParams(updatedPath,updated))if(!oldRequired.has(name))add('Newly required '+name+' on '+method.toUpperCase()+' '+path);
+   const earlierResponses=isRecord(previous.responses)?previous.responses:{};
+   const revisedResponses=isRecord(updated.responses)?updated.responses:{};
+   for(const status of Object.keys(earlierResponses))if(/^2\d\d$/.test(status)&&!Object.prototype.hasOwnProperty.call(revisedResponses,status))add('Removed successful response '+status+' on '+method.toUpperCase()+' '+path);
+  }
+ }
+ return changes;
+}
+document.getElementById('compare').addEventListener('click',()=>{
+ try{
+  if(before.value.length>500000||after.value.length>500000)throw Error('Each input must be under 500,000 characters in this free preview.');
+  const issues=check(JSON.parse(before.value),JSON.parse(after.value));
+  result.textContent=issues.length?'Found '+issues.length+(issues.length===150?'+':'')+' candidate change(s):\n\n'+issues.join('\n')+'\n\nThis is not a full OpenAPI compatibility audit.':'No targeted patterns found. This does not establish that the APIs are compatible.';
+ }catch(e){result.textContent='Could not compare: '+(e instanceof Error?e.message:'Invalid input');}
+});
 </script></body></html>
